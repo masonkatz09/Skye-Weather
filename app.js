@@ -326,11 +326,58 @@ searchInp.addEventListener('input',()=>{
 
 searchInp.addEventListener('blur',()=>setTimeout(()=>document.getElementById('searchResults').classList.add('hidden'),200));
 
+// Detect Canadian postal code (e.g. M5V 3A8 or M5V3A8)
+function isCanadianPostal(q){
+  return /^[A-Za-z]\d[A-Za-z][\s]?\d[A-Za-z]\d$/.test(q.trim());
+}
+
+// Detect US ZIP code
+function isUSZip(q){
+  return /^\d{5}(-\d{4})?$/.test(q.trim());
+}
+
 async function searchCity(q){
+  const el=document.getElementById('searchResults');
   try{
+    // Canadian postal code — use Nominatim for best results
+    if(isCanadianPostal(q)){
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=Canada&format=json&limit=4&addressdetails=1`);
+      const d=await r.json();
+      if(!d.length){el.classList.add('hidden');return;}
+      el.classList.remove('hidden');
+      el.innerHTML=d.map(c=>{
+        const addr=c.address||{};
+        const name=addr.city||addr.town||addr.village||addr.suburb||addr.county||q.toUpperCase();
+        const region=addr.state||addr.province||'';
+        return `<div class="search-result-item"
+          onclick="loadCity('${name.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
+          ${name}${region?', '+region:''}, Canada &nbsp;<span style="color:var(--text3);font-size:11px">${q.toUpperCase()}</span>
+        </div>`;
+      }).join('');
+      return;
+    }
+
+    // US ZIP code — use Nominatim
+    if(isUSZip(q)){
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=USA&format=json&limit=4&addressdetails=1`);
+      const d=await r.json();
+      if(!d.length){el.classList.add('hidden');return;}
+      el.classList.remove('hidden');
+      el.innerHTML=d.map(c=>{
+        const addr=c.address||{};
+        const name=addr.city||addr.town||addr.village||addr.county||q;
+        const state=addr.state||'';
+        return `<div class="search-result-item"
+          onclick="loadCity('${name.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
+          ${name}${state?', '+state:''}, USA &nbsp;<span style="color:var(--text3);font-size:11px">${q}</span>
+        </div>`;
+      }).join('');
+      return;
+    }
+
+    // Regular city name search
     const r=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`);
     const d=await r.json();
-    const el=document.getElementById('searchResults');
     if(!d.results||!d.results.length){el.classList.add('hidden');return;}
     el.classList.remove('hidden');
     el.innerHTML=d.results.map(c=>`
@@ -377,7 +424,8 @@ async function loadWeather(lat,lon,city){
       +`&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,uv_index,precipitation`
       +`&hourly=temperature_2m,precipitation_probability,weather_code`
       +`&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset`
-      +`&wind_speed_unit=kmh&temperature_unit=celsius&timezone=auto&forecast_days=7`;
+      +`&wind_speed_unit=kmh&temperature_unit=celsius&timezone=auto&forecast_days=7`
+      +`&models=gem_seamless`; // GEM = Environment Canada's official forecast model
 
     const res=await fetch(url);
     if(!res.ok) throw new Error('fetch failed');
@@ -501,7 +549,11 @@ function render(d,city){
         </div>
       </div>
     </div>
-    <div class="footer">Skye Weather &nbsp;·&nbsp; Data: Open-Meteo</div>
+    <div class="footer">
+      <div class="footer-brand">Skye Weather</div>
+      <div class="footer-data">Powered by Environment Canada (GEM) via Open-Meteo</div>
+      <div class="footer-credit">Created by <span>MK+ Services</span></div>
+    </div>
   `;
 }
 

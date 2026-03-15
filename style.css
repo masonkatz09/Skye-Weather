@@ -570,10 +570,37 @@ body {
 /* ─── FOOTER ─── */
 .footer {
   text-align: center;
-  padding: 1.5rem 1rem 0;
+  padding: 1.75rem 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.footer-brand {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text3);
+  letter-spacing: 1.5px;
+}
+
+.footer-data {
+  font-size: 11px;
+  color: var(--text3);
+  letter-spacing: 0.3px;
+  opacity: 0.7;
+}
+
+.footer-credit {
   font-size: 11px;
   color: var(--text3);
   letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+.footer-credit span {
+  font-weight: 500;
+  color: var(--text2);
 }
 
 /* ─── UTILITIES ─── */
