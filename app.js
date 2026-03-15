@@ -506,7 +506,7 @@ function render(d,city){
   }
 
   document.getElementById('mainContent').innerHTML=`
-    <div class="hero" style="background:${hbg}">
+    <div class="hero">
       <div class="hero-city">${city}</div>
       <div class="hero-date">${dateStr}</div>
       <div class="hero-main">
@@ -523,10 +523,10 @@ function render(d,city){
         </div>
       </div>
       <div class="hero-stats">
-        <div class="hs" style="background:${hbg}"><div class="hs-l">Wind</div><div class="hs-v">${Math.round(c.wind_speed_10m)} km/h</div></div>
-        <div class="hs" style="background:${hbg}"><div class="hs-l">Humidity</div><div class="hs-v">${Math.round(c.relative_humidity_2m)}%</div></div>
-        <div class="hs" style="background:${hbg}"><div class="hs-l">UV Index</div><div class="hs-v">${Math.round(c.uv_index)}</div></div>
-        <div class="hs" style="background:${hbg}"><div class="hs-l">Rain</div><div class="hs-v">${c.precipitation||0} mm</div></div>
+        <div class="hs"><div class="hs-l">Wind</div><div class="hs-v">${Math.round(c.wind_speed_10m)} km/h</div></div>
+        <div class="hs"><div class="hs-l">Humidity</div><div class="hs-v">${Math.round(c.relative_humidity_2m)}%</div></div>
+        <div class="hs"><div class="hs-l">UV Index</div><div class="hs-v">${Math.round(c.uv_index)}</div></div>
+        <div class="hs"><div class="hs-l">Rain</div><div class="hs-v">${c.precipitation||0} mm</div></div>
       </div>
     </div>
     ${alertBand}
