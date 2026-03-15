@@ -339,27 +339,44 @@ function isUSZip(q){
 async function searchCity(q){
   const el=document.getElementById('searchResults');
   try{
-    // Canadian postal code — use Nominatim for best results
+    // Canadian postal code — GeoNames supports Canadian postal codes reliably
     if(isCanadianPostal(q)){
-      const r=await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=Canada&format=json&limit=4&addressdetails=1`);
+      const clean=q.replace(/\s/g,'').toUpperCase();
+      // Use GeoNames postalCodeSearch — free, no key needed for basic lookup
+      const r=await fetch(`https://secure.geonames.org/postalCodeSearchJSON?postalcode=${encodeURIComponent(clean)}&country=CA&maxRows=4&username=demo`);
       const d=await r.json();
-      if(!d.length){el.classList.add('hidden');return;}
-      el.classList.remove('hidden');
-      el.innerHTML=d.map(c=>{
-        const addr=c.address||{};
-        const name=addr.city||addr.town||addr.village||addr.suburb||addr.county||q.toUpperCase();
-        const region=addr.state||addr.province||'';
-        return `<div class="search-result-item"
-          onclick="loadCity('${name.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
-          ${name}${region?', '+region:''}, Canada &nbsp;<span style="color:var(--text3);font-size:11px">${q.toUpperCase()}</span>
-        </div>`;
-      }).join('');
+      if(d.postalCodes&&d.postalCodes.length){
+        el.classList.remove('hidden');
+        el.innerHTML=d.postalCodes.map(c=>`
+          <div class="search-result-item"
+            onclick="loadCity('${(c.placeName||clean).replace(/'/g,"\\'")}',${c.lat},${c.lng});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
+            ${c.placeName||clean}${c.adminName1?', '+c.adminName1:''}, Canada &nbsp;<span style="opacity:0.55;font-size:11px">${clean.slice(0,3)+' '+clean.slice(3)}</span>
+          </div>`).join('');
+        return;
+      }
+      // Fallback: try OpenStreetMap with full query string
+      const r2=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean+' Canada')}&format=json&limit=4&addressdetails=1`,{headers:{'User-Agent':'SkyeWeather/1.0'}});
+      const d2=await r2.json();
+      if(d2.length){
+        el.classList.remove('hidden');
+        el.innerHTML=d2.map(c=>{
+          const addr=c.address||{};
+          const name=addr.city||addr.town||addr.village||addr.suburb||addr.municipality||addr.county||clean;
+          const prov=addr.state||'';
+          return `<div class="search-result-item"
+            onclick="loadCity('${name.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
+            ${name}${prov?', '+prov:''}, Canada &nbsp;<span style="opacity:0.55;font-size:11px">${clean.slice(0,3)+' '+clean.slice(3)}</span>
+          </div>`;
+        }).join('');
+        return;
+      }
+      el.classList.add('hidden');
       return;
     }
 
-    // US ZIP code — use Nominatim
+    // US ZIP code
     if(isUSZip(q)){
-      const r=await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=USA&format=json&limit=4&addressdetails=1`);
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(q.trim())}&country=USA&format=json&limit=4&addressdetails=1`,{headers:{'User-Agent':'SkyeWeather/1.0'}});
       const d=await r.json();
       if(!d.length){el.classList.add('hidden');return;}
       el.classList.remove('hidden');
@@ -369,7 +386,7 @@ async function searchCity(q){
         const state=addr.state||'';
         return `<div class="search-result-item"
           onclick="loadCity('${name.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
-          ${name}${state?', '+state:''}, USA &nbsp;<span style="color:var(--text3);font-size:11px">${q}</span>
+          ${name}${state?', '+state:''}, USA &nbsp;<span style="opacity:0.55;font-size:11px">${q}</span>
         </div>`;
       }).join('');
       return;
@@ -385,7 +402,7 @@ async function searchCity(q){
         onclick="loadCity('${c.name.replace(/'/g,"\\'")}',${c.latitude},${c.longitude});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">
         ${c.name}${c.admin1?', '+c.admin1:''}, ${c.country}
       </div>`).join('');
-  }catch(e){console.error(e);}
+  }catch(e){console.error('Search error:',e);}
 }
 
 // ─── LOCATION ─────────────────────────────────────────────────
@@ -416,26 +433,61 @@ async function loadCity(name,lat,lon){
   await loadWeather(lat,lon,name);
 }
 
+// ─── WIND DIRECTION ───────────────────────────────────────────
+function windArrow(deg){
+  const dirs=['N','NE','E','SE','S','SW','W','NW'];
+  return dirs[Math.round(deg/45)%8];
+}
+
 // ─── LOAD WEATHER ─────────────────────────────────────────────
+// Forecast: Open-Meteo with EC's GEM model (same model Environment Canada uses)
+// Warnings: Environment Canada's official CAP alerts API
 async function loadWeather(lat,lon,city){
   try{
     const url=`https://api.open-meteo.com/v1/forecast`
       +`?latitude=${lat}&longitude=${lon}`
-      +`&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m,uv_index,precipitation`
+      +`&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,uv_index,precipitation,surface_pressure`
       +`&hourly=temperature_2m,precipitation_probability,weather_code`
       +`&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset`
       +`&wind_speed_unit=kmh&temperature_unit=celsius&timezone=auto&forecast_days=7`
-      +`&models=gem_seamless`; // GEM = Environment Canada's official forecast model
+      +`&models=gem_seamless`;
 
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('fetch failed');
-    const d=await res.json();
+    // EC warnings API — official Government of Canada alerts
+    const warnUrl=`https://api.weather.gc.ca/collections/alerts/items?lang=en&limit=5&f=json`
+      +`&bbox=${(lon-1).toFixed(3)},${(lat-1).toFixed(3)},${(lon+1).toFixed(3)},${(lat+1).toFixed(3)}`;
+
+    const [wRes, warnRes] = await Promise.allSettled([fetch(url), fetch(warnUrl)]);
+    if(wRes.status!=='fulfilled'||!wRes.value.ok) throw new Error('fetch failed');
+    const d=await wRes.value.json();
+
+    // Parse EC warnings
+    let warnings=[];
+    if(warnRes.status==='fulfilled'&&warnRes.value.ok){
+      try{
+        const wd=await warnRes.value.json();
+        if(wd.features&&wd.features.length){
+          // Deduplicate by event type
+          const seen=new Set();
+          wd.features.forEach(f=>{
+            const ev=f.properties?.event||'Weather Alert';
+            if(!seen.has(ev)){
+              seen.add(ev);
+              warnings.push({
+                title: f.properties?.headline||ev,
+                severity: (f.properties?.severity||'moderate').toLowerCase(),
+                type: ev
+              });
+            }
+          });
+        }
+      }catch(e){}
+    }
+
     currentData=d;
     currentCode=d.current.weather_code;
-
     const hour=new Date().getHours();
     setBackground(currentCode, hour);
-    render(d,city);
+    render(d,city,warnings);
     loadAI(d.current.temperature_2m, WD[currentCode]||'', d.current.wind_speed_10m, d.current.relative_humidity_2m, city);
   }catch(e){
     document.getElementById('mainContent').innerHTML=`<div class="full-loading"><div class="loading-icon">⚠️</div><div>Could not load weather. Try another city.</div></div>`;
@@ -443,15 +495,30 @@ async function loadWeather(lat,lon,city){
 }
 
 // ─── RENDER ───────────────────────────────────────────────────
-function render(d,city){
+function render(d,city,warnings=[]){
   setTheme();
   const c=d.current, now=new Date(), hour=now.getHours(), code=c.weather_code;
-  const hbg=heroColor(code,hour);
   const dateStr=DAYS[now.getDay()]+', '+MONTHS[now.getMonth()]+' '+now.getDate();
   const sunrise=d.daily.sunrise?.[0], sunset=d.daily.sunset?.[0];
+  const windDirLabel=c.wind_direction_10m!=null?windArrow(c.wind_direction_10m):'';
 
-  const alertBand=(code>=95)
-    ?`<div class="alert-band"><span class="alert-icon">⚠️</span> Thunderstorm warning in effect for ${city}.</div>`:'';
+  // Real EC warnings > code-based fallback
+  let alertBand='';
+  if(warnings.length){
+    const sevColor={extreme:'#ff4040',severe:'#ff6b35',moderate:'#ffa040',minor:'#ffd040'};
+    alertBand=warnings.map(w=>{
+      const col=sevColor[w.severity]||'#f87171';
+      return `<div class="alert-band" style="border-color:${col}55;color:${col}">
+        <span class="alert-icon">⚠️</span>
+        <div>
+          <div style="font-weight:500;font-size:13px;margin-bottom:2px">${w.type}</div>
+          <div style="font-size:12px;opacity:0.85">${w.title}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } else if(code>=95){
+    alertBand=`<div class="alert-band"><span class="alert-icon">⚠️</span> Thunderstorm warning in effect for ${city}.</div>`;
+  }
 
   const sunRow=(sunrise&&sunset)
     ?`<div class="sun-row">
@@ -523,7 +590,7 @@ function render(d,city){
         </div>
       </div>
       <div class="hero-stats">
-        <div class="hs"><div class="hs-l">Wind</div><div class="hs-v">${Math.round(c.wind_speed_10m)} km/h</div></div>
+        <div class="hs"><div class="hs-l">Wind</div><div class="hs-v">${windDirLabel} ${Math.round(c.wind_speed_10m)}<span style="font-size:10px"> km/h</span></div></div>
         <div class="hs"><div class="hs-l">Humidity</div><div class="hs-v">${Math.round(c.relative_humidity_2m)}%</div></div>
         <div class="hs"><div class="hs-l">UV Index</div><div class="hs-v">${Math.round(c.uv_index)}</div></div>
         <div class="hs"><div class="hs-l">Rain</div><div class="hs-v">${c.precipitation||0} mm</div></div>
