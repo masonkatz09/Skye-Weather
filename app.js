@@ -129,12 +129,17 @@ async function loadWeather(lat,lon,city){
     return;
   }
 
-  // Step 2: EC conditions + alerts — totally optional, never block weather display
+  // Step 2: EC conditions + alerts — optional, 5s timeout so they never block
   let ecTemp=null,ecCond=null,warnings=[];
+  const fetchWithTimeout=(url,ms=5000)=>{
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),ms);
+    return fetch(url,{signal:ctrl.signal}).finally(()=>clearTimeout(timer));
+  };
   try{
     const [ecRes,alertsRes]=await Promise.allSettled([
-      fetch(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`),
-      fetch(`${API}?type=alerts&lat=${lat}&lon=${lon}`)
+      fetchWithTimeout(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`),
+      fetchWithTimeout(`${API}?type=alerts&lat=${lat}&lon=${lon}`)
     ]);
     if(ecRes.status==='fulfilled'&&ecRes.value.ok){
       const ec=await ecRes.value.json();
