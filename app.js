@@ -168,41 +168,63 @@ function setBg(code, hour){
 animateBg();
 
 // ─── ALERT MODAL ─────────────────────────────────────────────
-function showAlert(type, title, severity) {
-  // Remove any existing modal
+function showAlert(idx) {
   const existing = document.getElementById('alertModal');
   if (existing) existing.remove();
 
+  const w = (window._activeWarnings||[])[idx];
+  if (!w) return;
+
   const sevCol = {extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
-  const col = sevCol[severity] || '#ff8070';
+  const col = sevCol[w.severity] || '#ff8070';
+  const sevLabel = w.severity==='severe'?'Severe Warning':w.severity==='moderate'?'Weather Watch':w.severity==='extreme'?'Extreme Warning':'Special Statement';
+  const sevIcon = w.severity==='severe'||w.severity==='extreme'?'🔴':w.severity==='moderate'?'🟠':'🟡';
+
+  // Format the statement like EC does — split into readable paragraphs
+  const formatted = w.title
+    .replace(/\.\s+/g,'.
+
+')
+    .replace(/:\s+/g,':
+')
+    .trim();
+
+  const now = new Date().toLocaleString('en-CA',{weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
 
   const modal = document.createElement('div');
   modal.id = 'alertModal';
-  modal.style.cssText = `position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:rgba(0,0,0,0.65);backdrop-filter:blur(6px);`;
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.70);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
   modal.innerHTML = `
-    <div style="background:#1a1e24;border:1px solid ${col}44;border-radius:18px;padding:1.75rem;max-width:420px;width:100%;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
-        <span style="font-size:22px">⚠️</span>
-        <div>
-          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:${col};margin-bottom:2px">Weather Alert</div>
-          <div style="font-size:16px;font-weight:500;color:#E8EDF2;line-height:1.3">${type}</div>
+    <div style="background:#121417;border:1px solid ${col}33;border-radius:20px 20px 0 0;padding:0;max-width:480px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 -20px 60px rgba(0,0,0,0.8);">
+
+      <div style="padding:1.25rem 1.5rem 0;flex-shrink:0;">
+        <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 1.25rem;"></div>
+        <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:1rem;">
+          <div style="width:44px;height:44px;border-radius:12px;background:${col}18;border:1px solid ${col}33;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">⚠️</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:${col};margin-bottom:4px;font-family:'DM Sans',sans-serif">${sevIcon} ${sevLabel}</div>
+            <div style="font-size:17px;font-weight:500;color:#E8EDF2;line-height:1.3;font-family:'DM Sans',sans-serif">${w.type}</div>
+          </div>
+          <button onclick="document.getElementById('alertModal').remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.10);color:#9AA3AD;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1">×</button>
         </div>
-        <button onclick="document.getElementById('alertModal').remove()" style="margin-left:auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:50%;width:32px;height:32px;color:#9AA3AD;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">×</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1rem;">
+          <div style="font-size:10px;padding:4px 10px;border-radius:20px;background:${col}15;color:${col};border:1px solid ${col}30;font-family:'DM Sans',sans-serif">Environment Canada</div>
+          <div style="font-size:10px;padding:4px 10px;border-radius:20px;background:rgba(255,255,255,0.05);color:#6B747D;border:1px solid rgba(255,255,255,0.08);font-family:'DM Sans',sans-serif">${currentCity}</div>
+          <div style="font-size:10px;padding:4px 10px;border-radius:20px;background:rgba(255,255,255,0.05);color:#6B747D;border:1px solid rgba(255,255,255,0.08);font-family:'DM Sans',sans-serif">${now}</div>
+        </div>
+        <div style="height:1px;background:${col}22;"></div>
       </div>
-      <div style="height:1px;background:${col}33;margin-bottom:1rem;"></div>
-      <div style="font-size:13px;color:#9AA3AD;line-height:1.75;max-height:60vh;overflow-y:auto;white-space:pre-wrap">${title}</div>
-      <div style="margin-top:1.25rem;display:flex;gap:8px;">
-        <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;border-radius:20px;background:${col}18;color:${col};border:1px solid ${col}33">
-          ${severity === 'severe' ? '🔴 Severe' : severity === 'moderate' ? '🟠 Moderate' : '🟡 Minor'}
-        </div>
-        <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;border-radius:20px;background:rgba(255,255,255,0.06);color:#6B747D;border:1px solid rgba(255,255,255,0.08)">
-          Environment Canada
-        </div>
+
+      <div style="padding:1.25rem 1.5rem;overflow-y:auto;flex:1;">
+        <div style="font-size:14px;color:#9AA3AD;line-height:1.85;font-family:'DM Sans',sans-serif;white-space:pre-wrap;">${formatted}</div>
+      </div>
+
+      <div style="padding:1rem 1.5rem 1.5rem;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.06);">
+        <button onclick="document.getElementById('alertModal').remove()" style="width:100%;padding:13px;border-radius:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.10);color:#E8EDF2;font-size:14px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;">Dismiss</button>
       </div>
     </div>`;
 
-  // Close on backdrop click
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
   document.body.appendChild(modal);
 }
 
@@ -343,17 +365,18 @@ function render(d, city, warnings){
   const sevCol = {extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
   let alertHTML = '';
   if(warnings&&warnings.length){
-    alertHTML = warnings.slice(0,3).map(w=>{
+    // Store full warnings on window so popup can access complete text
+    window._activeWarnings = warnings;
+    alertHTML = warnings.slice(0,3).map((w,i)=>{
       const col = sevCol[w.severity]||'#ff8070';
-      const safeType = w.type.replace(/'/g,"\\'");
-      const safeTitle = w.title.replace(/'/g,"\\'").replace(/`/g,'\\`');
-      return `<div class="alert-band" style="border-color:${col}44;color:${col};cursor:pointer;" onclick="showAlert('${safeType}','${safeTitle}','${w.severity}')">
+      const preview = w.title.slice(0,90)+(w.title.length>90?'…':'');
+      return `<div class="alert-band" style="border-color:${col}44;color:${col};cursor:pointer;" onclick="showAlert(${i})">
         <span class="alert-icon">⚠️</span>
         <div style="flex:1">
           <div style="font-weight:500;font-size:13px;margin-bottom:3px">${w.type}</div>
-          <div style="font-size:12px;opacity:.85;line-height:1.5">${w.title.slice(0,80)}${w.title.length>80?'...':''}</div>
+          <div style="font-size:12px;opacity:.85;line-height:1.5">${preview}</div>
         </div>
-        <div style="font-size:18px;opacity:.5;flex-shrink:0">›</div>
+        <div style="font-size:18px;opacity:.5;flex-shrink:0;padding-left:8px">›</div>
       </div>`;
     }).join('');
   } else if(code>=95){
