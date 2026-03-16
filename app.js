@@ -167,6 +167,45 @@ function setBg(code, hour){
 
 animateBg();
 
+// ─── ALERT MODAL ─────────────────────────────────────────────
+function showAlert(type, title, severity) {
+  // Remove any existing modal
+  const existing = document.getElementById('alertModal');
+  if (existing) existing.remove();
+
+  const sevCol = {extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
+  const col = sevCol[severity] || '#ff8070';
+
+  const modal = document.createElement('div');
+  modal.id = 'alertModal';
+  modal.style.cssText = `position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:rgba(0,0,0,0.65);backdrop-filter:blur(6px);`;
+  modal.innerHTML = `
+    <div style="background:#1a1e24;border:1px solid ${col}44;border-radius:18px;padding:1.75rem;max-width:420px;width:100%;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
+        <span style="font-size:22px">⚠️</span>
+        <div>
+          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:${col};margin-bottom:2px">Weather Alert</div>
+          <div style="font-size:16px;font-weight:500;color:#E8EDF2;line-height:1.3">${type}</div>
+        </div>
+        <button onclick="document.getElementById('alertModal').remove()" style="margin-left:auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:50%;width:32px;height:32px;color:#9AA3AD;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">×</button>
+      </div>
+      <div style="height:1px;background:${col}33;margin-bottom:1rem;"></div>
+      <div style="font-size:13px;color:#9AA3AD;line-height:1.75;max-height:60vh;overflow-y:auto;white-space:pre-wrap">${title}</div>
+      <div style="margin-top:1.25rem;display:flex;gap:8px;">
+        <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;border-radius:20px;background:${col}18;color:${col};border:1px solid ${col}33">
+          ${severity === 'severe' ? '🔴 Severe' : severity === 'moderate' ? '🟠 Moderate' : '🟡 Minor'}
+        </div>
+        <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;border-radius:20px;background:rgba(255,255,255,0.06);color:#6B747D;border:1px solid rgba(255,255,255,0.08)">
+          Environment Canada
+        </div>
+      </div>
+    </div>`;
+
+  // Close on backdrop click
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+}
+
 // ─── FAVOURITES ──────────────────────────────────────────────
 function renderFavs(){
   document.getElementById('favsRow').innerHTML =
@@ -304,14 +343,19 @@ function render(d, city, warnings){
   const sevCol = {extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
   let alertHTML = '';
   if(warnings&&warnings.length){
-    alertHTML = warnings.slice(0,3).map(w=>`
-      <div class="alert-band" style="border-color:${sevCol[w.severity]||'#ff5540'}44;color:${sevCol[w.severity]||'#ff8070'}">
+    alertHTML = warnings.slice(0,3).map(w=>{
+      const col = sevCol[w.severity]||'#ff8070';
+      const safeType = w.type.replace(/'/g,"\\'");
+      const safeTitle = w.title.replace(/'/g,"\\'").replace(/`/g,'\\`');
+      return `<div class="alert-band" style="border-color:${col}44;color:${col};cursor:pointer;" onclick="showAlert('${safeType}','${safeTitle}','${w.severity}')">
         <span class="alert-icon">⚠️</span>
-        <div>
+        <div style="flex:1">
           <div style="font-weight:500;font-size:13px;margin-bottom:3px">${w.type}</div>
-          <div style="font-size:12px;opacity:.85;line-height:1.5">${w.title}</div>
+          <div style="font-size:12px;opacity:.85;line-height:1.5">${w.title.slice(0,80)}${w.title.length>80?'...':''}</div>
         </div>
-      </div>`).join('');
+        <div style="font-size:18px;opacity:.5;flex-shrink:0">›</div>
+      </div>`;
+    }).join('');
   } else if(code>=95){
     alertHTML='<div class="alert-band" style="border-color:#ff554444;color:#ff8070"><span class="alert-icon">⚠️</span> Thunderstorm warning in effect.</div>';
   }
