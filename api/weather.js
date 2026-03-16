@@ -149,7 +149,31 @@ export default async function handler(req, res) {
 
         const fsa = raw.slice(0,3);
         const lookup = FSA[fsa] || FSA[raw.slice(0,2)];
+        const formatted = raw.slice(0,3)+' '+raw.slice(3);
 
+        // Try precise geocoding first: search for the exact postal code as a place
+        // Nominatim sometimes indexes the FSA (first 3 chars) even if not the full code
+        const preciseAttempts = [
+          // Try full formatted postal code
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(formatted+', Canada')}&countrycodes=ca&format=json&addressdetails=1&limit=3`,
+          // Try just the FSA
+          `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(fsa)}&countrycodes=ca&format=json&addressdetails=1&limit=3`,
+          // Try FSA as text search
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fsa+', Canada')}&countrycodes=ca&format=json&addressdetails=1&limit=3`,
+        ];
+
+        for (const url of preciseAttempts) {
+          const r = await fetch(url, {headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)','Accept-Language':'en'}});
+          const d = await r.json();
+          if (d&&d.length) {
+            const a = d[0].address||{};
+            const cityName = lookup ? lookup.split(',')[0] : (a.city||a.town||a.village||a.suburb||formatted);
+            const prov = lookup ? lookup.split(',')[1] : (a.state||'');
+            return res.json(d.map(r=>({...r, _postalCity:cityName, _postalProv:prov, _postalCode:formatted})));
+          }
+        }
+
+        // Final fallback: use FSA city lookup with city-level coordinates
         if (lookup) {
           const [cityName, prov] = lookup.split(',');
           const r = await fetch(
@@ -158,7 +182,7 @@ export default async function handler(req, res) {
           );
           const d = await r.json();
           if (d&&d.length) {
-            return res.json(d.map(r=>({...r, _postalCity:cityName, _postalProv:prov, _postalCode:raw.slice(0,3)+' '+raw.slice(3)})));
+            return res.json(d.map(r=>({...r, _postalCity:cityName, _postalProv:prov, _postalCode:formatted})));
           }
         }
         return res.json([]);
