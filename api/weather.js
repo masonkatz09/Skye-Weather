@@ -155,79 +155,153 @@ export default async function handler(req, res) {
       return res.json({alerts});
     }
 
-    // ── ALERT DETAIL — full EC statement ─────────────────────
+    // ── ALERT DETAIL — full text from EC CAP XML files ─────────
     if (type === 'alertdetail') {
-      const EC2 = {
-        'toronto':'ON/s0000458','montreal':'QC/s0000635','vancouver':'BC/s0000141',
-        'calgary':'AB/s0000047','edmonton':'AB/s0000045','ottawa':'ON/s0000430',
-        'winnipeg':'MB/s0000193','hamilton':'ON/s0000568','london':'ON/s0000326',
-        'halifax':'NS/s0000318','victoria':'BC/s0000775','saskatoon':'SK/s0000797',
-        'regina':'SK/s0000788','mississauga':'ON/s0000582','brampton':'ON/s0000597',
-        'surrey':'BC/s0000813','barrie':'ON/s0000568','kitchener':'ON/s0000574',
-        'markham':'ON/s0000669','oakville':'ON/s0000490','windsor':'ON/s0000500',
-        'sudbury':'ON/s0000397','thunder bay':'ON/s0000411','guelph':'ON/s0000568',
-        "st. john's":'NL/s0000280','moncton':'NB/s0000661','kelowna':'BC/s0000592',
-        'fredericton':'NB/s0000250','lethbridge':'AB/s0000742','nanaimo':'BC/s0000394',
-        'kamloops':'BC/s0000568','prince george':'BC/s0000584','abbotsford':'BC/s0000034',
-        'burnaby':'BC/s0000141','richmond':'BC/s0000141','oshawa':'ON/s0000574',
-        'waterloo':'ON/s0000574','brantford':'ON/s0000568'
-      };
-      const key2 = (city||'').toLowerCase().trim().replace(/,.*$/,'');
-      const ecCode2 = EC2[key2];
+      // The full alert text (What/When/Additional info) lives in CAP XML files
+      // on dd.weather.gc.ca/alerts/cap/today/LAND/{PROV}/
+      // We fetch the directory listing, find the latest file, parse the description
+
+      const la = parseFloat(lat), lo = parseFloat(lon);
       let sections = [], issuedTime = '';
 
-      // Step 1: Get warning text from EC citypage XML
-      if (ecCode2) {
-        try {
-          const r = await fetch('https://dd.weather.gc.ca/citypage_weather/xml/'+ecCode2+'_e.xml',{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-          if (r.ok) {
-            const xml = await r.text();
-            for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
-              const typeM = m[1].match(/type="([^"]*)"/i);
-              const descM = m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
-              const dateM = m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
-              if (descM) {
-                const raw = descM[1]
-                  .replace(/<br\s*\/?>/gi,'\n').replace(/<p[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n')
-                  .replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<')
-                  .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
-                  .replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
-                if (raw&&raw.length>10&&!raw.toLowerCase().includes('no watches')&&!raw.toLowerCase().includes('no warning')) {
-                  sections.push({type:typeM?typeM[1]:'Weather Alert', text:raw});
+      // Determine province from coordinates
+      const prov =
+        (la>41&&la<57&&lo>-95&&lo<-74)  ? 'ON' :
+        (la>48&&la<60&&lo>-139&&lo<-114) ? 'BC' :
+        (la>49&&la<60&&lo>-120&&lo<-110) ? 'AB' :
+        (la>45&&la<63&&lo>-79&&lo<-57)   ? 'QC' :
+        (la>49&&la<60&&lo>-102&&lo<-89)  ? 'MB' :
+        (la>49&&la<60&&lo>-110&&lo<-101) ? 'SK' :
+        (la>43&&la<47&&lo>-66&&lo<-59)   ? 'NS' :
+        (la>44&&la<48&&lo>-69&&lo<-63)   ? 'NB' :
+        (la>46&&la<61&&lo>-68&&lo<-52)   ? 'NL' :
+        (la>45&&la<47&&lo>-64&&lo<-62)   ? 'PE' :
+        (la>60&&lo>-141&&lo<-120)         ? 'YT' :
+        (la>60&&lo>-120&&lo<-102)         ? 'NT' : 'ON';
+
+      try {
+        // Step 1: Get directory listing of today's CAP files for this province
+        const dirUrl = 'https://dd.weather.gc.ca/alerts/cap/today/LAND/' + prov + '/';
+        const dirRes = await fetch(dirUrl, {headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+
+        if (dirRes.ok) {
+          const dirHtml = await dirRes.text();
+          // Find all .cap file links, get the most recent one
+          const capFiles = [...dirHtml.matchAll(/href="([^"]*\.cap)"/gi)].map(m => m[1]);
+
+          if (capFiles.length > 0) {
+            // Sort descending — most recent last alphabetically (timestamps in filename)
+            capFiles.sort();
+            // Try last few files to find one with actual warning content (not END message)
+            for (let i = capFiles.length - 1; i >= Math.max(0, capFiles.length - 5); i--) {
+              const fileName = capFiles[i];
+              const fileUrl = dirUrl + fileName;
+              const capRes = await fetch(fileUrl, {headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+
+              if (!capRes.ok) continue;
+              const capXml = await capRes.text();
+
+              // Skip END/CANCEL messages
+              const msgTypeM = capXml.match(/<msgType>(.*?)<\/msgType>/i);
+              if (msgTypeM && (msgTypeM[1] === 'Cancel' || msgTypeM[1] === 'Ack')) continue;
+
+              // Extract from English info block
+              const infoBlocks = [...capXml.matchAll(/<info>([\s\S]*?)<\/info>/gi)];
+              let englishBlock = null;
+              for (const block of infoBlocks) {
+                const langM = block[1].match(/<language>(.*?)<\/language>/i);
+                if (!langM || langM[1].toLowerCase().includes('en')) {
+                  englishBlock = block[1];
+                  break;
                 }
               }
-              if (dateM&&!issuedTime) issuedTime=dateM[1].replace(/<[^>]+>/g,'').trim();
-            }
-          }
-        } catch(e2) {}
-      }
+              if (!englishBlock) englishBlock = infoBlocks[0]?.[1] || '';
 
-      // Step 2: If no text found, fall back to battleboard title + issued time
-      if (sections.length === 0) {
-        try {
-          const la2=parseFloat(lat),lo2=parseFloat(lon);
-          const bb2=getBattleboardCode(la2,lo2);
-          const r2=await fetch('https://weather.gc.ca/rss/battleboard/'+bb2+'_e.xml',{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-          if (r2.ok) {
-            const xml2=await r2.text();
-            for (const e of [...xml2.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]) {
-              const tM=e[1].match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
-              const sM=e[1].match(/<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/i);
-              const pubM=e[1].match(/<published>([\s\S]*?)<\/published>/i)||e[1].match(/<updated>([\s\S]*?)<\/updated>/i);
-              const title=tM?tM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').trim():'';
-              const summary=sM?sM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").trim():'';
-              const pub=pubM?pubM[1].trim():'';
-              if(!title)continue;
-              const tl=title.toLowerCase();
-              if(tl.includes('no watches')||tl.includes('no warning')||tl.includes('aucun'))continue;
-              if(!tl.includes('warning')&&!tl.includes('watch')&&!tl.includes('advisory')&&!tl.includes('statement')&&!tl.includes('alert'))continue;
-              if(!issuedTime&&pub)issuedTime=pub;
-              if(sections.length===0){
-                sections.push({type:title.replace(/^(YELLOW|RED|ORANGE|GREEN)\s+(WARNING|WATCH|ADVISORY|STATEMENT)\s*[-]\s*/i,'').split(' issued')[0].trim(), text:(summary||title)});
+              // Get the fields
+              const eventM       = englishBlock.match(/<event>([\s\S]*?)<\/event>/i);
+              const headlineM    = englishBlock.match(/<headline>([\s\S]*?)<\/headline>/i);
+              const descM        = englishBlock.match(/<description>([\s\S]*?)<\/description>/i);
+              const instructionM = englishBlock.match(/<instruction>([\s\S]*?)<\/instruction>/i);
+              const sentM        = capXml.match(/<sent>([\s\S]*?)<\/sent>/i);
+
+              const event       = eventM       ? eventM[1].replace(/<[^>]+>/g,'').trim() : '';
+              const headline    = headlineM    ? headlineM[1].replace(/<[^>]+>/g,'').trim() : '';
+              const description = descM        ? descM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#xA;/g,'
+').replace(/\n/g,'
+').trim() : '';
+              const instruction = instructionM ? instructionM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#xA;/g,'
+').trim() : '';
+
+              if (sentM) {
+                const d = new Date(sentM[1].trim());
+                issuedTime = d.toLocaleString('en-CA',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZoneName:'short'});
+              }
+
+              if (description && description.length > 20) {
+                // Build structured text exactly like The Weather Network shows it
+                let fullText = '';
+                if (headline) fullText += headline + '
+
+';
+                fullText += description;
+                if (instruction) fullText += '
+
+' + instruction;
+                fullText += '
+
+###
+
+Please continue to monitor alerts and forecasts issued by Environment Canada. To report severe weather, send an email to ONstorm@ec.gc.ca or post reports on X using #ONStorm.';
+
+                sections.push({ type: event || 'Weather Alert', text: fullText });
+                break; // Found a good one
               }
             }
           }
-        } catch(e3) {}
+        }
+      } catch(e) { /* CAP fetch failed, fall through to citypage */ }
+
+      // Fallback: citypage XML if CAP fetch failed
+      if (sections.length === 0) {
+        const EC2 = {
+          'toronto':'ON/s0000458','montreal':'QC/s0000635','vancouver':'BC/s0000141',
+          'calgary':'AB/s0000047','edmonton':'AB/s0000045','ottawa':'ON/s0000430',
+          'winnipeg':'MB/s0000193','hamilton':'ON/s0000568','london':'ON/s0000326',
+          'halifax':'NS/s0000318','victoria':'BC/s0000775','saskatoon':'SK/s0000797',
+          'regina':'SK/s0000788','mississauga':'ON/s0000582','brampton':'ON/s0000597',
+          'surrey':'BC/s0000813','barrie':'ON/s0000568','kitchener':'ON/s0000574',
+          'markham':'ON/s0000669','oakville':'ON/s0000490','windsor':'ON/s0000500',
+          'sudbury':'ON/s0000397','thunder bay':'ON/s0000411','guelph':'ON/s0000568',
+          "st. john's":'NL/s0000280','moncton':'NB/s0000661','kelowna':'BC/s0000592'
+        };
+        const key2 = (city||'').toLowerCase().trim().replace(/,.*$/,'');
+        const ecCode2 = EC2[key2];
+        if (ecCode2) {
+          try {
+            const r = await fetch('https://dd.weather.gc.ca/citypage_weather/xml/'+ecCode2+'_e.xml',{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+            if (r.ok) {
+              const xml = await r.text();
+              for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
+                const typeM = m[1].match(/type="([^"]*)"/i);
+                const descM = m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
+                const dateM = m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
+                if (descM) {
+                  const raw = descM[1].replace(/<br\s*\/?>/gi,'
+').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/
+/g,'
+').replace(/
+{3,}/g,'
+
+').trim();
+                  if (raw&&raw.length>10&&!raw.toLowerCase().includes('no watches')&&!raw.toLowerCase().includes('no warning')) {
+                    sections.push({type:typeM?typeM[1]:'Weather Alert', text:raw});
+                  }
+                }
+                if (dateM&&!issuedTime) issuedTime=dateM[1].replace(/<[^>]+>/g,'').trim();
+              }
+            }
+          } catch(e2) {}
+        }
       }
 
       return res.json({sections, issuedTime});
