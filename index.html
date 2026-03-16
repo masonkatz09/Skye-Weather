@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="description" content="Skye Weather — live forecasts, AI outfit suggestions, local activity ideas." />
+  <meta name="theme-color" content="#121417" />
+  <meta property="og:title" content="Skye Weather" />
+  <meta property="og:description" content="Live weather with animated backgrounds, AI outfit suggestions and local activity ideas." />
+  <title>Skye Weather</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="bgCanvas"></canvas>
+  <div class="app" id="app">
+
+    <div class="topbar">
+      <div class="logo-wrap">
+        <img src="SKYE.png" alt="Skye" class="logo-img" />
+        <div class="logo-text-wrap">
+          <div class="logo-name">Skye</div>
+          <div class="logo-sub">Weather</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <button class="toggle-unit" onclick="toggleUnit()">°C / °F</button>
+        <button class="icon-btn" onclick="detectLocation()" title="Use my location">📍</button>
+      </div>
+    </div>
+
+    <div class="search-wrap">
+      <input class="search-inp" id="searchInp" placeholder="Search city, postal or ZIP code..." autocomplete="off" />
+      <div class="search-results hidden" id="searchResults"></div>
+    </div>
+
+    <div class="favs-row" id="favsRow"></div>
+
+    <div id="mainContent">
+      <div class="full-loading">
+        <div class="loading-icon">🌤️</div>
+        <div>Detecting your location...</div>
+      </div>
+    </div>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
