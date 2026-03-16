@@ -157,7 +157,7 @@ export default async function handler(req, res) {
 
     // ── ALERT DETAIL — full EC statement ─────────────────────
     if (type === 'alertdetail') {
-      const EC = {
+      const EC2 = {
         'toronto':'ON/s0000458','montreal':'QC/s0000635','vancouver':'BC/s0000141',
         'calgary':'AB/s0000047','edmonton':'AB/s0000045','ottawa':'ON/s0000430',
         'winnipeg':'MB/s0000193','hamilton':'ON/s0000568','london':'ON/s0000326',
@@ -167,42 +167,72 @@ export default async function handler(req, res) {
         'markham':'ON/s0000669','oakville':'ON/s0000490','windsor':'ON/s0000500',
         'sudbury':'ON/s0000397','thunder bay':'ON/s0000411','guelph':'ON/s0000568',
         "st. john's":'NL/s0000280','moncton':'NB/s0000661','kelowna':'BC/s0000592',
-        'fredericton':'NB/s0000250','charlottetown':'PE/s0000583','whitehorse':'YT/s0000825',
-        'yellowknife':'NT/s0000366','lethbridge':'AB/s0000742','nanaimo':'BC/s0000394',
-        'kamloops':'BC/s0000568','prince george':'BC/s0000584','burnaby':'BC/s0000141',
-        'richmond':'BC/s0000141','abbotsford':'BC/s0000034','oshawa':'ON/s0000574',
-        'waterloo':'ON/s0000574','brantford':'ON/s0000568','niagara falls':'ON/s0000326'
+        'fredericton':'NB/s0000250','lethbridge':'AB/s0000742','nanaimo':'BC/s0000394',
+        'kamloops':'BC/s0000568','prince george':'BC/s0000584','abbotsford':'BC/s0000034',
+        'burnaby':'BC/s0000141','richmond':'BC/s0000141','oshawa':'ON/s0000574',
+        'waterloo':'ON/s0000574','brantford':'ON/s0000568'
       };
-      const key = (city||'').toLowerCase().trim().replace(/,.*$/,'');
-      const code = EC[key];
-      if (!code) return res.json({sections:[], issuedTime:''});
+      const key2 = (city||'').toLowerCase().trim().replace(/,.*$/,'');
+      const ecCode2 = EC2[key2];
+      let sections = [], issuedTime = '';
 
-      const r = await fetch(`https://dd.weather.gc.ca/citypage_weather/xml/${code}_e.xml`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-      if (!r.ok) return res.json({sections:[], issuedTime:''});
-      const xml = await r.text();
-
-      const sections = [];
-      let issuedTime = '';
-
-      for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
-        const typeM = m[1].match(/type="([^"]*)"/i);
-        const descM = m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
-        const dateM = m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
-        if (descM) {
-          const text = descM[1]
-            .replace(/<br\s*\/?>/gi,'\n').replace(/<p[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n')
-            .replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
-            .replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\r\n/g,'\n').replace(/\r/g,'\n')
-            .replace(/\n{3,}/g,'\n\n').trim();
-          if (text && text.length > 10 && !text.toLowerCase().includes('no watches') && !text.toLowerCase().includes('no warning')) {
-            sections.push({ type: typeM?typeM[1]:'Weather Alert', text });
+      // Step 1: Get warning text from EC citypage XML
+      if (ecCode2) {
+        try {
+          const r = await fetch('https://dd.weather.gc.ca/citypage_weather/xml/'+ecCode2+'_e.xml',{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+          if (r.ok) {
+            const xml = await r.text();
+            for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
+              const typeM = m[1].match(/type="([^"]*)"/i);
+              const descM = m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
+              const dateM = m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
+              if (descM) {
+                const raw = descM[1]
+                  .replace(/<br\s*\/?>/gi,'\n').replace(/<p[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n')
+                  .replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<')
+                  .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+                  .replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+                if (raw&&raw.length>10&&!raw.toLowerCase().includes('no watches')&&!raw.toLowerCase().includes('no warning')) {
+                  sections.push({type:typeM?typeM[1]:'Weather Alert', text:raw});
+                }
+              }
+              if (dateM&&!issuedTime) issuedTime=dateM[1].replace(/<[^>]+>/g,'').trim();
+            }
           }
-        }
-        if (dateM && !issuedTime) issuedTime = dateM[1].replace(/<[^>]+>/g,'').trim();
+        } catch(e2) {}
+      }
+
+      // Step 2: If no text found, fall back to battleboard title + issued time
+      if (sections.length === 0) {
+        try {
+          const la2=parseFloat(lat),lo2=parseFloat(lon);
+          const bb2=getBattleboardCode(la2,lo2);
+          const r2=await fetch('https://weather.gc.ca/rss/battleboard/'+bb2+'_e.xml',{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+          if (r2.ok) {
+            const xml2=await r2.text();
+            for (const e of [...xml2.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]) {
+              const tM=e[1].match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+              const sM=e[1].match(/<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/i);
+              const pubM=e[1].match(/<published>([\s\S]*?)<\/published>/i)||e[1].match(/<updated>([\s\S]*?)<\/updated>/i);
+              const title=tM?tM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').trim():'';
+              const summary=sM?sM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").trim():'';
+              const pub=pubM?pubM[1].trim():'';
+              if(!title)continue;
+              const tl=title.toLowerCase();
+              if(tl.includes('no watches')||tl.includes('no warning')||tl.includes('aucun'))continue;
+              if(!tl.includes('warning')&&!tl.includes('watch')&&!tl.includes('advisory')&&!tl.includes('statement')&&!tl.includes('alert'))continue;
+              if(!issuedTime&&pub)issuedTime=pub;
+              if(sections.length===0){
+                sections.push({type:title.replace(/^(YELLOW|RED|ORANGE|GREEN)\s+(WARNING|WATCH|ADVISORY|STATEMENT)\s*[-]\s*/i,'').split(' issued')[0].trim(), text:(summary||title)});
+              }
+            }
+          }
+        } catch(e3) {}
       }
 
       return res.json({sections, issuedTime});
     }
+
 
     // ── POSTAL CODE LOOKUP ────────────────────────────────────
     if (type === 'postal') {
