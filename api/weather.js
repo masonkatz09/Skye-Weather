@@ -75,9 +75,27 @@ export default async function handler(req, res) {
       const key = (city||'').toLowerCase().trim().replace(/,.*$/,'');
       const code = EC[key];
       if (!code) return res.json({warnings:[],ecTemp:null,ecCond:null});
-      const r = await fetch(`https://dd.weather.gc.ca/citypage_weather/xml/${code}_e.xml`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-      if (!r.ok) return res.json({warnings:[],ecTemp:null,ecCond:null});
-      const xml = await r.text();
+      const [provCode, siteCode2] = code.split('/');
+      // New EC URL format requires listing directory to find timestamped file
+      let xml = '';
+      const nowH = new Date();
+      for (let h = 0; h <= 3 && !xml; h++) {
+        const hh = new Date(nowH - h*3600000);
+        const hourStr = String(hh.getUTCHours()).padStart(2,'0');
+        try {
+          const dirRes = await fetch(`https://dd.weather.gc.ca/today/citypage_weather/${provCode}/${hourStr}/`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+          if (dirRes.ok) {
+            const html = await dirRes.text();
+            const pat = new RegExp(`href="([^"]*${siteCode2}_en\.xml)"`, 'i');
+            const m2 = html.match(pat);
+            if (m2) {
+              const fRes = await fetch(`https://dd.weather.gc.ca/today/citypage_weather/${provCode}/${hourStr}/${m2[1]}`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+              if (fRes.ok) xml = await fRes.text();
+            }
+          }
+        } catch(e3) {}
+      }
+      if (!xml) return res.json({warnings:[],ecTemp:null,ecCond:null});
       const warnings = [];
       for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
         const typeM = m[1].match(/type="([^"]*)"/i);
@@ -140,60 +158,122 @@ export default async function handler(req, res) {
       return res.json({alerts});
     }
 
-    // ── ALERT DETAIL — full structured EC statement ──────────
+    // ── ALERT DETAIL — full EC statement ─────────────────────
     if (type === 'alertdetail') {
-      const key = (city||'').toLowerCase().trim().replace(/,.*$/,'');
-      const code = EC[key];
-      let sections=[], issuedTime='';
+      // EC city codes mapped to province for new URL format
+      const EC_PROV = {
+        'toronto':'ON','montreal':'QC','vancouver':'BC','calgary':'AB','edmonton':'AB',
+        'ottawa':'ON','winnipeg':'MB','hamilton':'ON','london':'ON','halifax':'NS',
+        'victoria':'BC','saskatoon':'SK','regina':'SK','fredericton':'NB','charlottetown':'PE',
+        'whitehorse':'YT','yellowknife':'NT','iqaluit':'NU','mississauga':'ON','brampton':'ON',
+        'surrey':'BC','barrie':'ON','kitchener':'ON','markham':'ON','oakville':'ON',
+        'windsor':'ON','sudbury':'ON','thunder bay':'ON','kingston':'ON','guelph':'ON',
+        "st. john's":'NL','saint john':'NB','moncton':'NB','lethbridge':'AB','red deer':'AB',
+        'kelowna':'BC','nanaimo':'BC','kamloops':'BC','prince george':'BC','burnaby':'BC',
+        'richmond':'BC','abbotsford':'BC','oshawa':'ON','waterloo':'ON','brantford':'ON',
+        'niagara falls':'ON','richmond hill':'ON','vaughan':'ON'
+      };
+      const EC_CODE = {
+        'toronto':'s0000458','montreal':'s0000635','vancouver':'s0000141','calgary':'s0000047',
+        'edmonton':'s0000045','ottawa':'s0000430','winnipeg':'s0000193','hamilton':'s0000568',
+        'london':'s0000326','halifax':'s0000318','victoria':'s0000775','saskatoon':'s0000797',
+        'regina':'s0000788','fredericton':'s0000250','charlottetown':'s0000583',
+        'whitehorse':'s0000825','yellowknife':'s0000366','iqaluit':'s0000394',
+        'mississauga':'s0000582','brampton':'s0000597','surrey':'s0000813','barrie':'s0000568',
+        'kitchener':'s0000574','markham':'s0000669','oakville':'s0000490','windsor':'s0000500',
+        'sudbury':'s0000397','thunder bay':'s0000411','kingston':'s0000574','guelph':'s0000568',
+        "st. john's":'s0000280','moncton':'s0000661','kelowna':'s0000592','nanaimo':'s0000394',
+        'kamloops':'s0000568','prince george':'s0000584','burnaby':'s0000141','abbotsford':'s0000034'
+      };
 
-      // Try EC citypage XML — has full warning text with What/When/Additional info
-      if (code) {
+      const key = (city||'').toLowerCase().trim().replace(/,.*$/,'');
+      const prov = EC_PROV[key];
+      const siteCode = EC_CODE[key];
+      let sections = [], issuedTime = '';
+
+      if (prov && siteCode) {
         try {
-          const r=await fetch(`https://dd.weather.gc.ca/citypage_weather/xml/${code}_e.xml`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-          if (r.ok) {
-            const xml=await r.text();
-            for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
-              const typeM=m[1].match(/type="([^"]*)"/i);
-              const descM=m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
-              const dateM=m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
-              if (descM) {
-                const text=descM[1].replace(/<br\s*\/?>/gi,'\n').replace(/<p[^>]*>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
-                if (text&&text.length>10&&!text.toLowerCase().includes('no watches')&&!text.toLowerCase().includes('no warning')) {
-                  sections.push({type:typeM?typeM[1]:'Weather Alert',text});
+          // List the directory to find the current file for this city
+          // New EC URL: https://dd.weather.gc.ca/today/citypage_weather/ON/HH/
+          // Try current hour and a few recent hours
+          const now = new Date();
+          let found = false;
+          for (let h = 0; h <= 2 && !found; h++) {
+            const hh = new Date(now - h*3600000);
+            const hourStr = String(hh.getUTCHours()).padStart(2,'0');
+            const dirUrl = `https://dd.weather.gc.ca/today/citypage_weather/${prov}/${hourStr}/`;
+            try {
+              const dirRes = await fetch(dirUrl, {headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+              if (dirRes.ok) {
+                const html = await dirRes.text();
+                // Find the file for this site code
+                const pattern = new RegExp(`href="([^"]*${siteCode}_en\.xml)"`, 'i');
+                const match = html.match(pattern);
+                if (match) {
+                  const fileName = match[1];
+                  const fileUrl = dirUrl + fileName;
+                  const fileRes = await fetch(fileUrl, {headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+                  if (fileRes.ok) {
+                    const xml = await fileRes.text();
+                    for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
+                      const typeM = m[1].match(/type="([^"]*)"/i);
+                      const descM = m[2].match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
+                      const dateM = m[2].match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
+                      if (descM) {
+                        const text = descM[1].replace(/<br\s*\/?>/gi,'
+').replace(/<p[^>]*>/gi,'
+').replace(/<\/p>/gi,'
+').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/
+/g,'
+').replace(/
+/g,'
+').replace(/
+{3,}/g,'
+
+').trim();
+                        if (text && text.length > 10 && !text.toLowerCase().includes('no watches') && !text.toLowerCase().includes('no warning')) {
+                          sections.push({type: typeM?typeM[1]:'Weather Alert', text});
+                          found = true;
+                        }
+                      }
+                      if (dateM && !issuedTime) issuedTime = dateM[1].replace(/<[^>]+>/g,'').trim();
+                    }
+                  }
                 }
               }
-              if (dateM&&!issuedTime) issuedTime=dateM[1].replace(/<[^>]+>/g,'').trim();
-            }
+            } catch(e2) {}
           }
         } catch(e) {}
       }
 
-      // Fallback: battleboard summary if citypage had no text
-      if (sections.length===0) {
+      // Fallback: battleboard RSS issued time
+      if (sections.length === 0) {
         try {
-          const r2=await fetch(`https://weather.gc.ca/rss/battleboard/${bb(lat,lon)}_e.xml`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
-          if (r2.ok) {
-            const xml2=await r2.text();
-            for (const e of [...xml2.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]) {
-              const tM=e[1].match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
-              const sM=e[1].match(/<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/i);
-              const pubM=e[1].match(/<published>([\s\S]*?)<\/published>/i)||e[1].match(/<updated>([\s\S]*?)<\/updated>/i);
-              const title=tM?tM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').trim():'';
-              const summary=sM?sM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").trim():'';
-              const pub=pubM?pubM[1].trim():'';
+          const bbCode = bb(lat, lon);
+          const r = await fetch(`https://weather.gc.ca/rss/battleboard/${bbCode}_e.xml`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)'}});
+          if (r.ok) {
+            const xml = await r.text();
+            for (const e of [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)]) {
+              const tM = e[1].match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+              const sM = e[1].match(/<summary[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/summary>/i);
+              const pubM = e[1].match(/<published>([\s\S]*?)<\/published>/i)||e[1].match(/<updated>([\s\S]*?)<\/updated>/i);
+              const title = tM?tM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').trim():'';
+              const summary = sM?sM[1].replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&#39;/g,"'").trim():'';
+              const pub = pubM?pubM[1].trim():'';
               if (!title) continue;
-              const tl=title.toLowerCase();
+              const tl = title.toLowerCase();
               if (tl.includes('no watches')||tl.includes('no warning')||tl.includes('aucun')) continue;
               if (!tl.includes('warning')&&!tl.includes('watch')&&!tl.includes('advisory')&&!tl.includes('statement')&&!tl.includes('alert')) continue;
-              if (!issuedTime&&pub) issuedTime=pub;
-              if (sections.length===0) sections.push({type:title.replace(/^(YELLOW|RED|ORANGE|GREEN)\s+(WARNING|WATCH|ADVISORY|STATEMENT)\s*[-]\s*/i,'').split(' issued')[0].trim(),text:summary||title});
+              if (!issuedTime && pub) issuedTime = pub;
+              if (sections.length === 0) sections.push({type: title.replace(/^(YELLOW|RED|ORANGE|GREEN)\s+(WARNING|WATCH|ADVISORY|STATEMENT)\s*[-]\s*/i,'').split(' issued')[0].trim(), text: summary||title});
             }
           }
         } catch(e) {}
       }
 
-      return res.json({sections,issuedTime});
+      return res.json({sections, issuedTime});
     }
+
 
     // ── POSTAL CODE LOOKUP ───────────────────────────────────
     if (type === 'postal') {
