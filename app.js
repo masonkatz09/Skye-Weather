@@ -116,50 +116,75 @@ async function doSearch(q){const el=document.getElementById('searchResults');try
 async function detectLocation(){document.getElementById('mainContent').innerHTML='<div class="full-loading"><div class="loading-icon">📍</div><div>Detecting your location...</div></div>';if(!navigator.geolocation){loadCity('Toronto',43.6532,-79.3832);return;}navigator.geolocation.getCurrentPosition(async pos=>{const lat=pos.coords.latitude,lon=pos.coords.longitude;try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,{headers:{'Accept-Language':'en'}});const d=await r.json();const name=d.address?.city||d.address?.town||d.address?.village||d.address?.county||'My Location';currentCity=name;currentLat=lat;currentLon=lon;renderFavs();loadWeather(lat,lon,name);}catch{loadWeather(lat,lon,'My Location');}},()=>loadCity('Toronto',43.6532,-79.3832));}
 function loadCity(name,lat,lon){currentCity=name;currentLat=parseFloat(lat);currentLon=parseFloat(lon);renderFavs();document.getElementById('mainContent').innerHTML=`<div class="full-loading"><div class="loading-icon">🌤️</div><div>Loading ${name}...</div></div>`;loadWeather(lat,lon,name);}
 async function loadWeather(lat,lon,city){
-  // Step 1: Forecast ONLY — if this fails, show error. Nothing else can break this.
-  let forecast;
+  // Fetch forecast only — fast, direct, no EC dependency
   try{
     const r=await fetch(`${API}?type=forecast&lat=${lat}&lon=${lon}`);
-    if(!r.ok) throw new Error('Forecast API returned '+r.status);
-    forecast=await r.json();
-    if(!forecast||!forecast.current) throw new Error('Invalid forecast data');
+    if(!r.ok) throw new Error('Forecast '+r.status);
+    const forecast=await r.json();
+    if(!forecast||!forecast.current) throw new Error('Bad data');
+    currentData=forecast; currentCode=forecast.current.weather_code;
+    setBg(currentCode,new Date().getHours());
+    render(forecast,city,[]);
+    loadAI(forecast.current.temperature_2m,WD[currentCode]||'',forecast.current.wind_speed_10m,forecast.current.relative_humidity_2m,city);
+    // Load EC + alerts after render — never blocks weather display
+    loadECAndAlerts(lat,lon,city,forecast);
   }catch(e){
-    console.error('Forecast failed:',e);
-    document.getElementById('mainContent').innerHTML='<div class="full-loading"><div class="loading-icon">⚠️</div><div>Could not load weather. Please search for your city.</div></div>';
-    return;
+    console.error('loadWeather:',e);
+    document.getElementById('mainContent').innerHTML='<div class="full-loading"><div class="loading-icon">⚠️</div><div>Could not load weather. Try searching for your city.</div></div>';
   }
+}
 
-  // Step 2: EC conditions + alerts — optional, 5s timeout so they never block
-  let ecTemp=null,ecCond=null,warnings=[];
-  const fetchWithTimeout=(url,ms=5000)=>{
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),ms);
-    return fetch(url,{signal:ctrl.signal}).finally(()=>clearTimeout(timer));
-  };
+async function loadECAndAlerts(lat,lon,city,forecast){
   try{
-    const [ecRes,alertsRes]=await Promise.allSettled([
-      fetchWithTimeout(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`),
-      fetchWithTimeout(`${API}?type=alerts&lat=${lat}&lon=${lon}`)
-    ]);
-    if(ecRes.status==='fulfilled'&&ecRes.value.ok){
-      const ec=await ecRes.value.json();
-      ecTemp=ec.ecTemp||null; ecCond=ec.ecCond||null; warnings=ec.warnings||[];
+    const ctrl=new AbortController();
+    setTimeout(()=>ctrl.abort(),8000);
+    const r=await fetch(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`,{signal:ctrl.signal});
+    if(r.ok){
+      const ec=await r.json();
+      if(ec.ecTemp!=null) forecast.current._ecTemp=ec.ecTemp;
+      if(ec.ecCond) forecast.current._ecCond=ec.ecCond;
+      if(ec.warnings&&ec.warnings.length){
+        const sevCol={extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
+        window._activeWarnings=ec.warnings;
+        const alertHTML=ec.warnings.slice(0,3).map((w,i)=>{
+          const col=sevCol[w.severity]||'#ff8070';
+          const preview=w.issuedTime||w.title.slice(0,70)+(w.title.length>70?'…':'');
+          return `<div class="alert-band" style="border-color:${col}44;color:${col};cursor:pointer;" onclick="showAlert(${i})"><span class="alert-icon">⚠️</span><div style="flex:1"><div style="font-weight:500;font-size:13px;margin-bottom:3px">${w.type}</div><div style="font-size:12px;opacity:.85;line-height:1.5">${preview}</div></div><div style="font-size:18px;opacity:.5;padding-left:8px">›</div></div>`;
+        }).join('');
+        const existing=document.querySelector('.alert-band');
+        if(!existing&&alertHTML){
+          const hero=document.querySelector('.hero');
+          if(hero) hero.insertAdjacentHTML('afterend',alertHTML);
+        }
+      }
     }
-    if(alertsRes.status==='fulfilled'&&alertsRes.value.ok){
-      const al=await alertsRes.value.json();
-      if(al.alerts&&al.alerts.length) warnings=[...warnings,...al.alerts];
+  }catch(e){ console.log('EC non-critical:',e.message); }
+
+  try{
+    const ctrl2=new AbortController();
+    setTimeout(()=>ctrl2.abort(),8000);
+    const r2=await fetch(`${API}?type=alerts&lat=${lat}&lon=${lon}`,{signal:ctrl2.signal});
+    if(r2.ok){
+      const al=await r2.json();
+      if(al.alerts&&al.alerts.length){
+        const sevCol={extreme:'#ff4040',severe:'#ff5540',moderate:'#ff9500',minor:'#ffd000'};
+        const existing=window._activeWarnings||[];
+        const seen=new Set(existing.map(w=>w.type));
+        const newAlerts=al.alerts.filter(a=>!seen.has(a.type));
+        if(newAlerts.length){
+          window._activeWarnings=[...existing,...newAlerts];
+          const alertHTML=newAlerts.slice(0,2).map((w,i)=>{
+            const idx=existing.length+i;
+            const col=sevCol[w.severity]||'#ff8070';
+            const preview=w.issuedTime||w.title.slice(0,70)+(w.title.length>70?'…':'');
+            return `<div class="alert-band" style="border-color:${col}44;color:${col};cursor:pointer;" onclick="showAlert(${idx})"><span class="alert-icon">⚠️</span><div style="flex:1"><div style="font-weight:500;font-size:13px;margin-bottom:3px">${w.type}</div><div style="font-size:12px;opacity:.85;line-height:1.5">${preview}</div></div><div style="font-size:18px;opacity:.5;padding-left:8px">›</div></div>`;
+          }).join('');
+          const hero=document.querySelector('.hero');
+          if(hero&&alertHTML) hero.insertAdjacentHTML('afterend',alertHTML);
+        }
+      }
     }
-  }catch(e){ console.log('EC/alerts non-critical:',e.message); }
-
-  // Deduplicate warnings
-  const seen=new Set();
-  warnings=warnings.filter(w=>{if(seen.has(w.type))return false;seen.add(w.type);return true;});
-
-  currentData=forecast; currentCode=forecast.current.weather_code;
-  forecast.current._ecTemp=ecTemp; forecast.current._ecCond=ecCond;
-  setBg(currentCode,new Date().getHours());
-  render(forecast,city,warnings);
-  loadAI(forecast.current.temperature_2m,WD[currentCode]||'',forecast.current.wind_speed_10m,forecast.current.relative_humidity_2m,city);
+  }catch(e){ console.log('Alerts non-critical:',e.message); }
 }
 async function loadAI(temp,desc,wind,humidity,city){const prompt=`Weather in ${city}: ${Math.round(temp)}°C, ${desc}, wind ${Math.round(wind)} km/h, humidity ${Math.round(humidity)}%. Return ONLY valid JSON no markdown: {"outfit_summary":"2 practical sentences on what to wear","outfit_items":["item1","item2","item3","item4"],"activities":["activity 1","activity 2","activity 3","activity 4"]}`;try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:prompt}]})});const data=await res.json();const f=JSON.parse((data.content?.[0]?.text||'{}').replace(/```json|```/g,'').trim());const ot=document.getElementById('outfitTxt'),oc=document.getElementById('outfitChips'),al=document.getElementById('actList');if(ot){ot.className='ai-body';ot.textContent=f.outfit_summary||'';}if(oc)oc.innerHTML=(f.outfit_items||[]).map(i=>`<div class="chip">${i}</div>`).join('');if(al)al.innerHTML=(f.activities||[]).map(a=>`<div class="act-item"><div class="act-dot"></div>${a}</div>`).join('');}catch(e){const ot=document.getElementById('outfitTxt');if(ot){ot.className='ai-body';ot.textContent='AI suggestions unavailable.';}}}
 renderFavs();
