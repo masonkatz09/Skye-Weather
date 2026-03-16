@@ -211,7 +211,7 @@ function showAlert(idx) {
       </div>
 
       <div style="padding:1.25rem 1.5rem;overflow-y:auto;flex:1;">
-        <div style="font-size:14px;color:#9AA3AD;line-height:1.85;font-family:'DM Sans',sans-serif;white-space:pre-wrap;">${formatted}</div>
+        <div id="alertFullText" style="font-size:14px;color:#9AA3AD;line-height:1.85;font-family:'DM Sans',sans-serif;white-space:pre-wrap;">${formatted}</div>
       </div>
 
       <div style="padding:1rem 1.5rem 1.5rem;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.06);">
@@ -221,6 +221,25 @@ function showAlert(idx) {
 
   modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
   document.body.appendChild(modal);
+
+  // Fetch full EC alert text from citypage XML
+  const textEl = modal.querySelector('#alertFullText');
+  if (textEl && w.severity !== 'us') {
+    textEl.textContent = 'Loading full statement...';
+    fetch(`${API}?type=alertdetail&city=${encodeURIComponent(currentCity)}&lat=${currentLat}&lon=${currentLon}`)
+      .then(r=>r.json())
+      .then(d=>{
+        if (d.fullText && d.fullText.length > 20) {
+        const cleaned = d.fullText.replace(/  +/g,' ').replace(/([.!?]) +([A-Z])/g,'$1\n\n$2').trim();
+
+$1
+          textEl.textContent = cleaned;
+        } else {
+          textEl.textContent = w.title || 'No additional details available.';
+        }
+      })
+      .catch(()=>{ textEl.textContent = w.title || 'Could not load full statement.'; });
+  }
 }
 
 // ─── FAVOURITES ──────────────────────────────────────────────
