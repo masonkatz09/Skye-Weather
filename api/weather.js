@@ -190,23 +190,58 @@ export default async function handler(req, res) {
       if (!r.ok) return res.json({fullText:'', issuedTime:''});
       const xml = await r.text();
 
-      // Extract full warning text from the XML
-      // The citypage XML has <warnings> with <event> elements containing full description
-      const fullTexts = [];
+      // Extract full structured warning text from EC citypage XML
+      const sections = [];
       let issuedTime = '';
+      let warningType = '';
 
       for (const m of [...xml.matchAll(/<event([^>]*)>([\s\S]*?)<\/event>/gi)]) {
+        const attrs = m[1];
         const inner = m[2];
+        const typeM = attrs.match(/type="([^"]*)"/i);
         const descM = inner.match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
         const dateM = inner.match(/<dateTime[^>]*>([\s\S]*?)<\/dateTime>/i);
+
         if (descM) {
-          const desc = descM[1].replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim();
-          if (desc && desc.length > 10 && !desc.toLowerCase().includes('no watches') && !desc.toLowerCase().includes('no warning')) {
-            fullTexts.push(desc);
+          // Preserve original text with line breaks — don't collapse whitespace
+          const raw = descM[1]
+            .replace(/<br\s*\/?>/gi, '
+')
+            .replace(/<p[^>]*>/gi, '
+')
+            .replace(/<\/p>/gi, '
+')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/
+/g, '
+')
+            .replace(/
+/g, '
+')
+            // Normalize multiple blank lines to max 2
+            .replace(/
+{3,}/g, '
+
+')
+            .trim();
+
+          if (raw && raw.length > 10 &&
+              !raw.toLowerCase().includes('no watches') &&
+              !raw.toLowerCase().includes('no warning')) {
+            sections.push({
+              type: typeM ? typeM[1] : 'Weather Alert',
+              text: raw
+            });
+            if (!warningType && typeM) warningType = typeM[1];
           }
         }
         if (dateM && !issuedTime) {
-          issuedTime = dateM[1].trim();
+          issuedTime = dateM[1].replace(/<[^>]+>/g,'').trim();
         }
       }
 
@@ -236,8 +271,16 @@ export default async function handler(req, res) {
         }
       } catch(e) {}
 
-      const combined = [...fullTexts].join('\n\n') + (bulletinText ? '\n\n' + bulletinText : '');
-      return res.json({fullText: combined.trim(), issuedTime});
+      // Return structured sections for the frontend to display
+      const fullText = sections.map(s => s.text).join('\n\n---\n\n');
+      // Also append bulletin text if we got any extra detail
+      const combined = fullText + (bulletinText && bulletinText.length > 20 ? '\n\n' + bulletinText.trim() : '');
+      return res.json({
+        fullText: combined.trim(),
+        sections,
+        warningType,
+        issuedTime
+      });
     }
 
     // ── POSTAL / ZIP LOOKUP ────────────────────────────────────
