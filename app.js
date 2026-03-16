@@ -222,25 +222,52 @@ function showAlert(idx) {
   modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
   document.body.appendChild(modal);
 
-  // Fetch full EC alert text from citypage XML
+  // Fetch full structured EC alert text
   const textEl = modal.querySelector('#alertFullText');
-  if (textEl && w.severity !== 'us') {
-    textEl.textContent = 'Loading full statement...';
+  if (textEl) {
+    textEl.innerHTML = '<div style="color:#6B747D;font-size:13px;font-style:italic">Loading full statement...</div>';
     fetch(`${API}?type=alertdetail&city=${encodeURIComponent(currentCity)}&lat=${currentLat}&lon=${currentLon}`)
       .then(r=>r.json())
       .then(d=>{
-        if (d.fullText && d.fullText.length > 20) {
-        const cleaned = d.fullText.replace(/  +/g,' ').replace(/([.!?]) +([A-Z])/g,'$1\n\n$2').trim();
-
-$1
-          textEl.textContent = cleaned;
+        if (d.sections && d.sections.length > 0) {
+          const html = d.sections.map(s => {
+            const rawLines = s.text.split('\n');
+            let out = '';
+            rawLines.forEach((line, i) => {
+              const t = line.trim();
+              if (!t) return;
+              if (t === '###') {
+                out += '<div style="height:1px;background:rgba(255,255,255,0.08);margin:12px 0;"></div>';
+              } else if (/^(What|When|Where|Why|Additional information|Impacts|Discussion|Remarks|Issued by):/i.test(t)) {
+                const colon = t.indexOf(':');
+                const header = t.slice(0, colon);
+                const body = t.slice(colon+1).trim();
+                out += '<div style="margin-bottom:14px;"><div style="font-weight:500;color:#E8EDF2;font-size:13px;margin-bottom:5px;">' + header + '</div>';
+                if (body) out += '<div style="color:#9AA3AD;font-size:14px;line-height:1.75;">' + body + '</div>';
+                out += '</div>';
+              } else if (i === 0) {
+                out += '<div style="color:#E8EDF2;font-size:14px;line-height:1.75;margin-bottom:16px;">' + t + '</div>';
+              } else {
+                out += '<div style="color:#9AA3AD;font-size:14px;line-height:1.75;margin-bottom:10px;">' + t + '</div>';
+              }
+            });
+            return out;
+          }).join('<div style="height:1px;background:rgba(255,255,255,0.06);margin:14px 0;"></div>');
+          textEl.innerHTML = html || '<div style="color:#9AA3AD;font-size:14px;line-height:1.75">' + (w.title||'No details available.') + '</div>';
+        } else if (d.fullText && d.fullText.length > 20) {
+          textEl.innerHTML = d.fullText.split(/\n+/).filter(p=>p.trim()).map(p => {
+            const t = p.trim();
+            if (t==='###') return '<div style="height:1px;background:rgba(255,255,255,0.08);margin:12px 0;"></div>';
+            return '<div style="color:#9AA3AD;font-size:14px;line-height:1.75;margin-bottom:10px;">'+t+'</div>';
+          }).join('');
         } else {
-          textEl.textContent = w.title || 'No additional details available.';
+          textEl.innerHTML = '<div style="color:#9AA3AD;font-size:14px;line-height:1.75">'+(w.title||'No additional details available.')+'</div>';
         }
       })
-      .catch(()=>{ textEl.textContent = w.title || 'Could not load full statement.'; });
+      .catch(()=>{ textEl.innerHTML = '<div style="color:#9AA3AD;font-size:14px;line-height:1.75">'+(w.title||'Could not load statement.')+'</div>'; });
   }
 }
+
 
 // ─── FAVOURITES ──────────────────────────────────────────────
 function renderFavs(){
