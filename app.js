@@ -181,13 +181,8 @@ function showAlert(idx) {
   const sevIcon = w.severity==='severe'||w.severity==='extreme'?'🔴':w.severity==='moderate'?'🟠':'🟡';
 
   // Format the statement like EC does — split into readable paragraphs
-  const formatted = w.title
-    .replace(/\.\s+/g,'.
+  const formatted = w.title.replace(/([.!?])\s{2,}/g, '$1\n\n').replace(/([A-Z][^:]+):\s+/g, '$1:\n').trim();
 
-')
-    .replace(/:\s+/g,':
-')
-    .trim();
 
   const now = new Date().toLocaleString('en-CA',{weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
 
