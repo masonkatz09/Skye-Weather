@@ -353,24 +353,22 @@ function loadCity(name, lat, lon){
 // ─── LOAD WEATHER ────────────────────────────────────────────
 async function loadWeather(lat, lon, city){
   try{
-    const [forecastRes, ecRes, alertsRes] = await Promise.all([
-      fetch(`${API}?type=forecast&lat=${lat}&lon=${lon}`),
-      fetch(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`),
-      fetch(`${API}?type=alerts&lat=${lat}&lon=${lon}`)
-    ]);
-
+    // Fetch forecast first — this is critical. EC and alerts are non-critical.
+    const forecastRes = await fetch(`${API}?type=forecast&lat=${lat}&lon=${lon}`);
     if(!forecastRes.ok) throw new Error('Forecast failed');
     const forecast = await forecastRes.json();
+    if(forecast.error) throw new Error('Forecast error: ' + forecast.error);
 
+    // EC conditions and alerts in parallel — failures are non-fatal
     let ecTemp=null, ecCond=null, warnings=[];
-    if(ecRes.ok){
-      const ec = await ecRes.json();
-      ecTemp=ec.ecTemp; ecCond=ec.ecCond; warnings=ec.warnings||[];
-    }
-    if(alertsRes.ok){
-      const al = await alertsRes.json();
-      if(al.alerts&&al.alerts.length) warnings=[...warnings,...al.alerts];
-    }
+    try {
+      const [ecRes, alertsRes] = await Promise.all([
+        fetch(`${API}?type=ec&city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`).catch(()=>null),
+        fetch(`${API}?type=alerts&lat=${lat}&lon=${lon}`).catch(()=>null)
+      ]);
+      if(ecRes&&ecRes.ok){ const ec=await ecRes.json(); ecTemp=ec.ecTemp; ecCond=ec.ecCond; warnings=ec.warnings||[]; }
+      if(alertsRes&&alertsRes.ok){ const al=await alertsRes.json(); if(al.alerts&&al.alerts.length) warnings=[...warnings,...al.alerts]; }
+    } catch(e){ console.log('EC/alerts non-fatal:', e.message); }
 
     // Deduplicate
     const seen=new Set();
@@ -383,7 +381,20 @@ async function loadWeather(lat, lon, city){
     render(forecast, city, warnings);
     loadAI(forecast.current.temperature_2m, WD[currentCode]||'', forecast.current.wind_speed_10m, forecast.current.relative_humidity_2m, city);
   }catch(e){
-    console.error('loadWeather:', e);
+    console.error('loadWeather FAILED:', e.message, e);
+    // Try once more without the GEM model as fallback
+    try {
+      const url2 = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,uv_index,precipitation&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&wind_speed_unit=kmh&temperature_unit=celsius&timezone=auto&forecast_days=7`;
+      const r2 = await fetch(url2);
+      if (r2.ok) {
+        const d2 = await r2.json();
+        currentData=d2; currentCode=d2.current.weather_code;
+        setBg(currentCode, new Date().getHours());
+        render(d2, city, []);
+        loadAI(d2.current.temperature_2m, WD[currentCode]||'', d2.current.wind_speed_10m, d2.current.relative_humidity_2m, city);
+        return;
+      }
+    } catch(e2) { console.error('Fallback also failed:', e2); }
     document.getElementById('mainContent').innerHTML='<div class="full-loading"><div class="loading-icon">⚠️</div><div>Could not load weather. Try searching for your city.</div></div>';
   }
 }
