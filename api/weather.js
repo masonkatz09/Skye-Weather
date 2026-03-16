@@ -106,12 +106,18 @@ export default async function handler(req, res) {
           NL: la>46&&la<61&&lo>-68&&lo<-52,
           PE: la>45&&la<47&&lo>-64&&lo<-62
         };
-        let provCode = 'on';
+        // EC RSS region codes — maps province to main warning region
+        const provRSS = {
+          ON:'on-96', BC:'bc-48', AB:'ab-49', QC:'qc-71', MB:'mb-38',
+          SK:'sk-69', NS:'ns-19', NB:'nb-29', NL:'nl-33', PE:'pe-65'
+        };
+        let provKey = 'ON';
         for(const [code, match] of Object.entries(provinces)){
-          if(match){ provCode=code.toLowerCase(); break; }
+          if(match){ provKey=code; break; }
         }
+        const rssCode = provRSS[provKey] || 'on-96';
         try{
-          const rssUrl = `https://www.weather.gc.ca/rss/warning/${provCode}-96_e.xml`;
+          const rssUrl = `https://www.weather.gc.ca/rss/warning/${rssCode}_e.xml`;
           const r = await fetch(rssUrl, { headers:{'User-Agent':'SkyeWeather/1.0'} });
           if(r.ok){
             const xml = await r.text();
@@ -157,21 +163,37 @@ export default async function handler(req, res) {
       const isUS = /^\d{5}$/.test(postal);
       const cc   = isCA ? 'ca' : isUS ? 'us' : 'ca';
       const clean = postal.replace(/\s/g,'').toUpperCase();
+      // Canadian postal needs space in middle for Nominatim (M6C 3E9 not M6C3E9)
+      const formatted = isCA ? clean.slice(0,3)+' '+clean.slice(3) : clean;
 
-      const r = await fetch(
-        `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(clean)}&countrycodes=${cc}&format=json&addressdetails=1&limit=5`,
+      // Try 1: structured postalcode with country lock
+      const r1 = await fetch(
+        `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(formatted)}&countrycodes=${cc}&format=json&addressdetails=1&limit=5`,
         { headers:{ 'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)', 'Accept-Language':'en' } }
       );
-      const d = await r.json();
-      if(d&&d.length) return res.json(d);
+      const d1 = await r1.json();
+      if(d1&&d1.length) return res.json(d1);
 
-      // Fallback free-text
+      // Try 2: free-text ALWAYS locked to correct country — never search globally
+      const countryName = isCA ? 'Canada' : isUS ? 'United States' : 'Canada';
       const r2 = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(clean+(isCA?' Canada':''))}&format=json&addressdetails=1&limit=5`,
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(formatted+', '+countryName)}&countrycodes=${cc}&format=json&addressdetails=1&limit=5`,
         { headers:{ 'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)', 'Accept-Language':'en' } }
       );
       const d2 = await r2.json();
-      return res.json(d2||[]);
+      if(d2&&d2.length) return res.json(d2);
+
+      // Try 3: FSA only (first 3 chars) for broader Canadian match
+      if(isCA){
+        const r3 = await fetch(
+          `https://nominatim.openstreetmap.org/search?postalcode=${encodeURIComponent(clean.slice(0,3))}&countrycodes=ca&format=json&addressdetails=1&limit=5`,
+          { headers:{ 'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)', 'Accept-Language':'en' } }
+        );
+        const d3 = await r3.json();
+        if(d3&&d3.length) return res.json(d3);
+      }
+
+      return res.json([]);
     }
 
     res.status(400).json({ error:'Unknown type' });
