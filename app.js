@@ -198,15 +198,17 @@ async function doSearch(q){
       if(d&&d.length){
         const seen=new Set();
         const items = d.filter(c=>{
-          const a=c.address||{};
-          const n=a.city||a.town||a.village||a.suburb||a.municipality||a.county||q;
+          // For Canadian results, use _postalCity if available
+          const n=c._postalCity||(c.address?.city||c.address?.town||c.address?.village||c.address?.county||q);
           return seen.has(n)?false:(seen.add(n),true);
         }).slice(0,4).map(c=>{
           const a=c.address||{};
-          const n=a.city||a.town||a.village||a.suburb||a.municipality||a.county||q;
-          const region=a.state||'';
-          const country=a.country_code==='ca'?'Canada':a.country_code==='us'?'USA':(a.country||'');
-          return `<div class="search-result-item" onclick="loadCity('${n.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">${n}${region?', '+region:''}, ${country} <span style="opacity:.5;font-size:11px">${q.toUpperCase()}</span></div>`;
+          // Prefer the FSA-resolved city name for Canadian postal codes
+          const n=c._postalCity||a.city||a.town||a.village||a.suburb||a.municipality||a.county||q;
+          const prov=c._postalProv||a.state||'';
+          const code=c._postalCode||q.toUpperCase();
+          const country=a.country_code==='ca'?'Canada':a.country_code==='us'?'USA':(a.country||'Canada');
+          return `<div class="search-result-item" onclick="loadCity('${n.replace(/'/g,"\\'")}',${c.lat},${c.lon});searchInp.value='';document.getElementById('searchResults').classList.add('hidden')">${n}${prov?', '+prov:''}, ${country} <span style="opacity:.5;font-size:11px">${code}</span></div>`;
         });
         if(items.length){ el.innerHTML=items.join(''); el.classList.remove('hidden'); return; }
       }
