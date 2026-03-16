@@ -25,7 +25,7 @@ export default async function handler(req, res) {
         if (descM) {
           const desc = descM[1].replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim();
           if (desc&&desc.length>5&&!desc.toLowerCase().includes('no watches')&&!desc.toLowerCase().includes('no warning')&&!desc.toLowerCase().includes('no special')) {
-            warnings.push({type:typeM?typeM[1]:'Weather Alert',title:desc.slice(0,250),severity:prioM&&prioM[1]==='high'?'severe':prioM&&prioM[1]==='medium'?'moderate':'minor'});
+            warnings.push({type:typeM?typeM[1]:'Weather Alert',title:desc,severity:prioM&&prioM[1]==='high'?'severe':prioM&&prioM[1]==='medium'?'moderate':'minor'});
           }
         }
       }
@@ -99,7 +99,7 @@ export default async function handler(req, res) {
               const sev = tl.includes('warning')?'severe':tl.includes('watch')?'moderate':'minor';
               alerts.push({
                 type: title.replace(/^(YELLOW|RED|ORANGE|GREEN)\s+(WARNING|WATCH|ADVISORY)\s*-?\s*/i,'').split(' issued')[0].split(' –')[0].trim(),
-                title: (summary||title).slice(0,250),
+                title: summary||title,
                 severity: sev
               });
             }
@@ -112,7 +112,7 @@ export default async function handler(req, res) {
           const r = await fetch(`https://api.weather.gov/alerts/active?point=${la.toFixed(4)},${lo.toFixed(4)}`,{headers:{'User-Agent':'SkyeWeather/1.0 (mkplusservices.com)','Accept':'application/geo+json'}});
           if (r.ok) {
             const d = await r.json();
-            (d.features||[]).slice(0,4).forEach(f=>alerts.push({type:f.properties?.event||'Weather Alert',title:(f.properties?.headline||f.properties?.description||'').slice(0,250),severity:(f.properties?.severity||'minor').toLowerCase()}));
+            (d.features||[]).slice(0,4).forEach(f=>alerts.push({type:f.properties?.event||'Weather Alert',title:(f.properties?.headline||f.properties?.description||'').replace(/\n+/g,' ').trim(),severity:(f.properties?.severity||'minor').toLowerCase()}));
           }
         } catch(e) {}
       }
